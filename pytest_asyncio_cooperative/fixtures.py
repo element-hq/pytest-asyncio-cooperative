@@ -73,6 +73,9 @@ async def fill_fixtures(item: Item):
         fixtures.append(fixture)
         are_autouse.append(is_autouse)
 
+    # Slight hack to stop the regular fixture logic from running
+    item.fixturenames = []
+
     # Fill fixtures concurrently
     fill_results = await asyncio.gather(
         *(
@@ -86,9 +89,6 @@ async def fill_fixtures(item: Item):
 
         if not is_autouse:
             fixture_values.append(value)
-
-    # Slight hack to stop the regular fixture logic from running
-    item.fixturenames = []
 
     return fixture_values, teardowns
 
