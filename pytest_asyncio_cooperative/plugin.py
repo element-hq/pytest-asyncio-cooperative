@@ -1,5 +1,4 @@
 import asyncio
-import collections.abc
 import inspect
 import threading
 import time
@@ -10,7 +9,7 @@ from _pytest.skipping import Skip
 from _pytest.skipping import evaluate_skip_marks
 
 from .assertion import activate_assert_rewrite
-from .fixtures import fill_fixtures
+from .fixtures import do_teardowns, fill_fixtures
 from .integration.hypothesis import hypothesis_test_wrapper
 
 
@@ -83,21 +82,6 @@ async def test_wrapper(item):
     if item.instance:
         fixture_values.insert(0, item.instance)
 
-    async def do_teardowns():
-        item.start_teardown = time.time()
-        for teardown in teardowns:
-            if isinstance(teardown, collections.abc.Iterator):
-                try:
-                    teardown.__next__()
-                except StopIteration:
-                    pass
-            else:
-                try:
-                    await teardown.__anext__()
-                except StopAsyncIteration:
-                    pass
-        item.stop_teardown = time.time()
-
     # Run test
     item.start = time.time()
     try:
@@ -105,14 +89,10 @@ async def test_wrapper(item):
             await item.function(*fixture_values)
         else:
             item.function(*fixture_values)
-    except:
+    finally:
         # Teardown here otherwise we might leave fixtures with locks acquired
+        await do_teardowns(item, teardowns)
         item.stop = time.time()
-        await do_teardowns()
-        raise
-
-    item.stop = time.time()
-    await do_teardowns()
 
 
 def item_to_task(item):
