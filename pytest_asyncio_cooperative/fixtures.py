@@ -1,6 +1,7 @@
 import asyncio
+import collections
 import inspect
-import types
+import time
 from typing import List
 from typing import Union
 
@@ -78,10 +79,16 @@ async def fill_fixtures(item: Item):
         *(
             fill_fixture_fixtures(item._fixtureinfo, fixture, item)
             for fixture in fixtures
-        )
+        ),
+        return_exceptions=True
     )
 
-    for (value, extra_teardowns), is_autouse in zip(fill_results, are_autouse):
+    exceptions = []
+    for result, is_autouse in zip(fill_results, are_autouse):
+        if isinstance(result, BaseException):
+            exceptions.append(result)
+            continue
+        value, extra_teardowns = result
         teardowns.extend(extra_teardowns)
 
         if not is_autouse:
@@ -89,6 +96,13 @@ async def fill_fixtures(item: Item):
 
     # Slight hack to stop the regular fixture logic from running
     item.fixturenames = []
+
+    if len(exceptions) > 0:
+        await do_teardowns(item, teardowns)
+        if len(exceptions) == 1:
+            raise exceptions[0]
+        else:
+            raise ExceptionGroup(f"Fixtures for {item!r} failed", exceptions)
 
     return fixture_values, teardowns
 
@@ -104,10 +118,30 @@ async def _fill_fixture_fixtures(
         except Ignore:
             continue
 
-        value, teardowns = await fill_fixture_fixtures(_fixtureinfo, dep_fixture, item)
-        values.append(value)
-        all_teardowns.extend(teardowns)
+        try:
+            value, teardowns = await fill_fixture_fixtures(_fixtureinfo, dep_fixture, item)
+            values.append(value)
+            all_teardowns.extend(teardowns)
+        except:
+            await do_teardowns(item, all_teardowns)
+            raise
     return values, all_teardowns
+
+
+async def do_teardowns(item, teardowns):
+    item.start_teardown = time.time()
+    for teardown in teardowns:
+        if isinstance(teardown, collections.abc.Iterator):
+            try:
+                teardown.__next__()
+            except StopIteration:
+                pass
+        else:
+            try:
+                await teardown.__anext__()
+            except StopAsyncIteration:
+                pass
+    item.stop_teardown = time.time()
 
 
 class CachedFunctionBase(object):
